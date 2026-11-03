@@ -250,6 +250,7 @@ Paragraph; the rest open as in-app floating windows.
 | Themes: Photoshop's four greys | partial | five themes; #2661 |
 | Document tabs: overflow, context menu, reorder | done | UI-217-6; middle-click close #2570 |
 | Layers panel: wheel steps blend modes, drop on New/Trash | partial | UI-217-14 |
+| Layers panel: ⌘⌥-drag a shape layer, or a vector mask's thumbnail, onto another layer to copy its path there as a vector mask; "Replace the vector mask?" when the layer has one | done (2026-11-01) | `layer.vectorMask.transfer`; `layer_drag.rs` `vector_mask_drop`, `dialogs/vector_mask_replace_prompt.rs`, `layer_row_ui/tests.rs` `cmd_alt_dragging_*` |
 | Layers panel New Group button: click with 2+ layers selected groups them (CC 2014+), ⇧-click groups, one layer gives an empty group, ⌥-click opens the New Group dialog, ⌘-click adds the group below the active layer | done | #2561, `new_group_button_tests.rs` |
 | New Group dialog (Name, Color, Mode, Opacity) for Layer › New › Group… / Group from Layers…, the Layers panel menu and the row menu; ⌘G stays immediate | done | `dialogs/new_group_ui.rs`, `dialogs/new_group_ui/tests.rs` |
 | Groups made from layers (⌘G, New Group button, Group from Layers) start collapsed; selecting a layer inside opens the group | done | `group_options.rs` tests, `new_group_button_tests.rs` |
@@ -266,6 +267,7 @@ Paragraph; the rest open as in-app floating windows.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Layers panel: ⌘⌥-dragging a shape layer or a vector mask's thumbnail onto a layer copies its path there as a vector mask, asking before it replaces one (`layer.vectorMask.transfer`); row added (done); no percentage changed |
 | 2026-11-01 | minor | Every preference takes effect: 11 of 183 do nothing (was 12); Graphics Adapter always worked, but startup read it by raw JSON key, which the scorecard audit can't see |
 | 2026-10-29 | minor | Paragraph box overflow: text a box can't hold enlarges the box's lower-right handle and shows a black + in it, as the reference application does (#8311); agents read `typeBoxOverflow` in `ui.inspect`. Not a new command, so no percentage changed |
 | 2026-10-28 | minor | The text and gradient stop Color Pickers preview the picked colour on the canvas before OK, as Photoshop's do (#5530); no percentage changed |

@@ -298,6 +298,7 @@ fn command_body(app: &mut PhotocraftApp, ui: &mut egui::Ui, d: &Dialog, fields: 
         _ if crate::actions::owns_insert_stop(fields) => crate::actions::insert_stop_body(ui, fields),
         _ if crate::new_layer_ui::owns(fields) => crate::new_layer_ui::body(ui, fields),
         _ if crate::mask_trash_prompt::owns(fields) => crate::mask_trash_prompt::body(ui, fields),
+        _ if crate::vector_mask_replace_prompt::owns(fields) => crate::vector_mask_replace_prompt::body(ui, fields),
         _ if crate::rasterize_prompt::owns(fields) => crate::rasterize_prompt::body(ui, fields),
         _ if crate::duplicate_layer_ui::owns(fields) => crate::duplicate_layer_ui::body(app, ui, fields),
         _ if crate::stack_dialog::owns(fields) => crate::stack_dialog::body(app, ui, fields, d.id),
@@ -848,6 +849,7 @@ const ROUTES: &[fn(&Fields) -> bool] = &[
     crate::new_layer_ui::owns,
     crate::new_group_ui::owns,
     crate::mask_trash_prompt::owns,
+    crate::vector_mask_replace_prompt::owns,
     crate::rasterize_prompt::owns,
     crate::duplicate_layer_ui::owns,
     crate::stack_dialog::owns,
@@ -1005,6 +1007,7 @@ fn confirm_command(app: &mut PhotocraftApp, d: Dialog) -> Result<Value, String> 
         _ if crate::actions::owns_insert_stop(&d.fields) => crate::actions::insert_stop_confirm(app, &d.fields),
         _ if crate::new_layer_ui::owns(&d.fields) => crate::new_layer_ui::confirm(app, &d.fields),
         _ if crate::mask_trash_prompt::owns(&d.fields) => crate::mask_trash_prompt::confirm(app, &d.fields),
+        _ if crate::vector_mask_replace_prompt::owns(&d.fields) => crate::vector_mask_replace_prompt::confirm(app, &d.fields),
         _ if crate::rasterize_prompt::owns(&d.fields) => crate::rasterize_prompt::confirm(app, &d.fields),
         _ if crate::duplicate_layer_ui::owns(&d.fields) => crate::duplicate_layer_ui::confirm(app, &d.fields),
         _ if crate::stack_dialog::owns(&d.fields) => crate::stack_dialog::confirm(app, &d.fields),
@@ -1175,6 +1178,7 @@ pub mod targa_options_ui;
 #[cfg(test)]
 mod tests;
 pub mod tiff_options_ui;
+pub mod vector_mask_replace_prompt;
 pub mod vp_ui;
 pub mod wide_angle_ui;
 

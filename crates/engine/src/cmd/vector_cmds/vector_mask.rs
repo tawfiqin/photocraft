@@ -41,20 +41,56 @@ pub(super) fn vector_mask_add(s: &mut Session, p: &Value, from_path: bool) -> Re
     if p.get("hide").and_then(Value::as_bool).unwrap_or(false) {
         path.inverted = !path.inverted;
     }
-    s.edit("Add Vector Mask", |doc, _| {
-        let locked = doc.effective_locks(id).all;
-        let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
-        if matches!(l.content, LayerContent::Shape(_)) {
-            return Err(EngineError::Other("a shape layer's path is already its vector mask".into()));
+    s.edit("Add Vector Mask", |doc, _| set_vector_mask(doc, id, VectorMask::new(path)))?;
+    vector_mask_info(s, id)
+}
+
+/// Gives layer `id` the vector mask `vm`, replacing any it has. A shape layer (whose path is
+/// already its vector mask) and a locked layer refuse; the Background becomes a normal layer.
+fn set_vector_mask(doc: &mut photocraft_doc::Document, id: LayerId, vm: VectorMask) -> Result<()> {
+    let locked = doc.effective_locks(id).all;
+    let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
+    if matches!(l.content, LayerContent::Shape(_)) {
+        return Err(EngineError::Other("a shape layer's path is already its vector mask".into()));
+    }
+    if locked {
+        return Err(EngineError::Other(format!("layer \"{}\" is locked", l.name)));
+    }
+    crate::extra_cmds::background_to_layer(doc, id);
+    doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?.vector_mask = Some(vm);
+    Ok(())
+}
+
+/// ⌘⌥-dragging a shape layer, or a vector mask's thumbnail, onto another layer in the Layers
+/// panel: the shape's path (or the vector mask, with its density and feather) becomes that
+/// layer's vector mask, replacing any it had. A vector mask moves without `copy`; a shape always
+/// keeps its path.
+pub(super) fn vector_mask_transfer(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "layer.vectorMask.transfer";
+    let id_of = |key: &str| p.get(key).and_then(Value::as_u64).map(LayerId).ok_or_else(|| bad(CMD, format!("`{key}` must be a layer id")));
+    let from = id_of("from")?;
+    let to = id_of("to")?;
+    if from == to {
+        return Err(bad(CMD, "the vector mask is already on that layer"));
+    }
+    let copy = p.get("copy").and_then(Value::as_bool).unwrap_or(true);
+    let d = s.active().ok_or(EngineError::NoDocument)?;
+    let src = d.doc.layer(from).ok_or(EngineError::NoLayer(from))?;
+    d.doc.layer(to).ok_or(EngineError::NoLayer(to))?;
+    let (vm, from_mask) = match (&src.vector_mask, &src.content) {
+        (Some(v), _) => (v.clone(), true),
+        (None, LayerContent::Shape(sh)) => (VectorMask { density: sh.density, feather: sh.feather, ..VectorMask::new(sh.path.clone()) }, false),
+        (None, _) => return Err(EngineError::Other(format!("layer \"{}\" has no vector mask or shape path", src.name))),
+    };
+    let label = if copy || !from_mask { "Copy Vector Mask" } else { "Move Vector Mask" };
+    s.edit(label, |doc, _| {
+        set_vector_mask(doc, to, vm)?;
+        if !copy && from_mask {
+            doc.layer_mut(from).ok_or(EngineError::NoLayer(from))?.vector_mask = None;
         }
-        if locked {
-            return Err(EngineError::Other(format!("layer \"{}\" is locked", l.name)));
-        }
-        crate::extra_cmds::background_to_layer(doc, id);
-        doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?.vector_mask = Some(VectorMask::new(path));
         Ok(())
     })?;
-    vector_mask_info(s, id)
+    vector_mask_info(s, to)
 }
 
 pub(super) fn vector_mask_edit(s: &mut Session, p: &Value) -> Result<Value> {

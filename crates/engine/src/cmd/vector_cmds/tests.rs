@@ -1238,3 +1238,109 @@ fn triangles_and_polygons_take_a_corner_radius_kept_through_edits_and_scaling() 
     s.execute("shape.edit", json!({"layer": id, "transform": [0.5, 0, 0, 0.5, 0, 0]})).unwrap();
     assert!(matches!(live(&s), Some(LiveShape::Polygon { corner_radius, .. }) if (corner_radius - 5.0).abs() < 1e-9));
 }
+
+/// A black, full-canvas pixel layer; returns its id.
+fn black_layer(s: &mut Session) -> u64 {
+    s.execute("layer.new.layer", json!({})).unwrap();
+    s.execute("path.set", json!({"name": "all", "path": {"subpaths": [{"knots": [[0, 0], [100, 0], [100, 100], [0, 100]]}]}})).unwrap();
+    s.execute("path.fill", json!({"name": "all", "color": "#000000"})).unwrap();
+    s.active().unwrap().active_layer.unwrap().0
+}
+
+/// ⌘⌥-dragging a shape onto a layer: its path becomes that layer's vector mask in one undoable
+/// step, the shape keeps its path, and an existing vector mask is replaced.
+#[test]
+fn vector_mask_transfer_copies_a_shape_path() {
+    for depth in [8, 16, 32] {
+        let mut s = session(100, 100, depth);
+        let target = black_layer(&mut s);
+        let shape_id = s.execute("shape.create", json!({"kind": "rect", "rect": [0, 0, 50, 100], "fill": "#000000"})).unwrap()["layer"].as_u64().unwrap();
+        s.execute("layer.vectorMask.edit", json!({"layer": shape_id, "density": 80, "feather": 2})).unwrap();
+        let steps = s.active().unwrap().history.past_len();
+        let r = s.execute("layer.vectorMask.transfer", json!({"from": shape_id, "to": target})).unwrap();
+        assert_eq!((r["layer"].clone(), r["density"].clone(), r["feather"].clone()), (json!(target), json!(80.0), json!(2.0)), "{depth}");
+        assert_eq!(s.active().unwrap().history.past_len(), steps + 1, "{depth}: one history step");
+        let vm = doc(&s).layer(LayerId(target)).unwrap().vector_mask.clone().unwrap();
+        assert_eq!(vm.path, shape(&s, shape_id).path, "{depth}");
+        assert!(doc(&s).layer(LayerId(shape_id)).unwrap().vector_mask.is_none(), "{depth}: the shape keeps its path");
+        s.undo();
+        assert!(doc(&s).layer(LayerId(target)).unwrap().vector_mask.is_none(), "{depth}");
+        s.redo();
+        // The mask hides the right half of the black layer.
+        s.execute("layer.vectorMask.edit", json!({"layer": target, "density": 100, "feather": 0})).unwrap();
+        s.execute("layer.delete", json!({"layer": shape_id})).unwrap();
+        let f = photocraft_compose::flatten(doc(&s));
+        assert!(f.get(20, 50)[0] < 0.01 && f.get(80, 50)[0] > 0.99, "{depth}");
+        // Copying again replaces the existing mask.
+        s.execute("shape.create", json!({"kind": "rect", "rect": [60, 0, 100, 100]})).unwrap();
+        let other = s.active().unwrap().active_layer.unwrap().0;
+        s.execute("layer.vectorMask.transfer", json!({"from": other, "to": target})).unwrap();
+        assert_eq!(doc(&s).layer(LayerId(target)).unwrap().vector_mask.as_ref().unwrap().path, shape(&s, other).path, "{depth}");
+    }
+}
+
+#[test]
+fn vector_mask_transfer_copies_or_moves_a_vector_mask() {
+    let mut s = session(100, 100, 8);
+    let a = black_layer(&mut s);
+    s.execute("path.set", json!({"path": {"subpaths": [{"knots": [[0, 0], [50, 0], [50, 100], [0, 100]]}]}})).unwrap();
+    s.execute("layer.vectorMask.currentPath", json!({})).unwrap();
+    s.execute("layer.vectorMask.edit", json!({"density": 40, "feather": 3, "linked": false})).unwrap();
+    let b = black_layer(&mut s);
+    let mask = doc(&s).layer(LayerId(a)).unwrap().vector_mask.clone().unwrap();
+    s.execute("layer.vectorMask.transfer", json!({"from": a, "to": b, "copy": true})).unwrap();
+    assert_eq!(doc(&s).layer(LayerId(b)).unwrap().vector_mask.as_ref(), Some(&mask));
+    assert!(doc(&s).layer(LayerId(a)).unwrap().vector_mask.is_some(), "copy keeps the source's mask");
+    s.undo();
+    s.execute("layer.vectorMask.transfer", json!({"from": a, "to": b, "copy": false})).unwrap();
+    assert_eq!(doc(&s).layer(LayerId(b)).unwrap().vector_mask.as_ref(), Some(&mask));
+    assert!(doc(&s).layer(LayerId(a)).unwrap().vector_mask.is_none(), "move clears the source");
+    s.undo();
+    assert_eq!(doc(&s).layer(LayerId(a)).unwrap().vector_mask.as_ref(), Some(&mask));
+    assert!(doc(&s).layer(LayerId(b)).unwrap().vector_mask.is_none());
+}
+
+#[test]
+fn vector_mask_transfer_onto_the_background_makes_it_a_layer() {
+    let mut s = session(64, 64, 8);
+    let bg = doc(&s).background().unwrap().id;
+    let sh = s.execute("shape.create", json!({"kind": "rect", "rect": [8, 8, 30, 30]})).unwrap()["layer"].as_u64().unwrap();
+    s.execute("layer.vectorMask.transfer", json!({"from": sh, "to": bg.0})).unwrap();
+    assert!(doc(&s).background().is_none());
+    assert!(doc(&s).layer(bg).unwrap().vector_mask.is_some());
+}
+
+#[test]
+fn vector_mask_transfer_fails_gracefully() {
+    let mut s = session(64, 64, 8);
+    let pixel = black_layer(&mut s);
+    let empty = black_layer(&mut s);
+    let sh = s.execute("shape.create", json!({"kind": "rect", "rect": [8, 8, 30, 30]})).unwrap()["layer"].as_u64().unwrap();
+    let sh2 = s.execute("shape.create", json!({"kind": "rect", "rect": [30, 30, 50, 50]})).unwrap()["layer"].as_u64().unwrap();
+    let before = doc(&s).clone();
+    let steps = s.active().unwrap().history.past_len();
+    let bad = [
+        json!({}),
+        json!({"from": sh}),
+        json!({"to": pixel}),
+        json!({"from": sh, "to": sh}),
+        json!({"from": [0, 0], "to": [0, 0]}),
+        json!({"from": "x", "to": pixel}),
+        json!({"from": -1, "to": pixel}),
+        json!({"from": u64::MAX, "to": pixel}),
+        json!({"from": sh, "to": u64::MAX}),
+        json!({"from": empty, "to": pixel}),
+        json!({"from": sh, "to": sh2}),
+    ];
+    for p in bad {
+        assert!(s.execute("layer.vectorMask.transfer", p.clone()).is_err(), "{p}");
+        assert_eq!(*doc(&s), before, "{p}");
+        assert_eq!(s.active().unwrap().history.past_len(), steps, "{p}");
+    }
+    // A locked target refuses it.
+    s.execute("layer.select", json!({"layer": pixel})).unwrap();
+    s.execute("layer.lockLayers", json!({"all": true})).unwrap();
+    let before = doc(&s).clone();
+    assert!(s.execute("layer.vectorMask.transfer", json!({"from": sh, "to": pixel})).is_err());
+    assert_eq!(*doc(&s), before);
+}

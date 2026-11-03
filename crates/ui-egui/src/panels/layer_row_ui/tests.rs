@@ -829,3 +829,95 @@ fn a_masked_artboards_thumbnail_retargets_it_and_ends_the_mask_view() {
     assert!(!h.state().ui.mask_target, "the board is targeted again");
     assert!(!viewing(&h), "and the mask view ends");
 }
+
+/// ⌘⌥ (Ctrl+Alt off macOS) held when a drag is dropped.
+const CMD_ALT: Modifiers = Modifiers { alt: true, ctrl: false, shift: false, mac_cmd: false, command: true };
+
+/// Photoshop: ⌘⌥-dragging a shape layer onto another layer gives that layer the shape's path as
+/// its vector mask, in one step, and moves no layer. A plain ⌥ drop of the same row still copies
+/// the layer. Onto a layer that has a vector mask the drop asks first: Cancel keeps the old mask,
+/// OK replaces it.
+#[test]
+fn cmd_alt_dragging_a_shape_onto_a_layer_makes_its_vector_mask() {
+    let mut s = photocraft_engine::Session::new();
+    s.execute("file.new", json!({"width": 64, "height": 48})).unwrap();
+    let pixel = s.execute("layer.new.layer", json!({"name": "Pixels"})).unwrap()["layer"].as_u64().unwrap();
+    let shape = s.execute("shape.create", json!({"kind": "rect", "rect": [4, 4, 30, 30]})).unwrap()["layer"].as_u64().unwrap();
+    let mut h = harness(s, 1.0, "promedium", 290.0);
+    let names = |h: &Harness<'_, PhotocraftApp>| h.state().session.active().unwrap().doc.layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
+    let steps = |h: &Harness<'_, PhotocraftApp>| h.state().session.active().unwrap().history.past_len();
+    let mask = |h: &Harness<'_, PhotocraftApp>| {
+        h.state().session.active().unwrap().doc.layer(photocraft_doc::LayerId(pixel)).unwrap().vector_mask.as_ref().map(|v| v.path.clone())
+    };
+    let shape_path = |h: &Harness<'_, PhotocraftApp>| match &h.state().session.active().unwrap().doc.layer(photocraft_doc::LayerId(shape)).unwrap().content {
+        LayerContent::Shape(sh) => sh.path.clone(),
+        _ => panic!("not a shape"),
+    };
+    let row = |h: &Harness<'_, PhotocraftApp>, id: u64| recorded(&h.ctx).into_iter().find(|r| r.layer == id).unwrap().row;
+    let order = names(&h);
+    let before = steps(&h);
+    let (a, b) = (row(&h, shape).center(), row(&h, pixel).center());
+    drag_from_to(&mut h, a, b, CMD_ALT);
+    assert_eq!(names(&h), order, "no layer moves or is copied");
+    assert_eq!(mask(&h), Some(shape_path(&h)));
+    assert_eq!(steps(&h), before + 1, "one undo step");
+    assert_eq!(h.state().session.active().unwrap().history.undo_label(), Some("Copy Vector Mask"));
+    assert!(h.state().ui.dialogs.iter().all(|d| !crate::vector_mask_replace_prompt::owns(&d.fields)), "no prompt without a mask to replace");
+    // ⌥ alone still copies the layer.
+    let before = steps(&h);
+    let (a, b) = (row(&h, shape).center(), row(&h, pixel).center());
+    drag_from_to(&mut h, a, b, Modifiers::ALT);
+    assert_eq!(names(&h).len(), order.len() + 1, "⌥ copies the shape layer");
+    assert_eq!(steps(&h), before + 1);
+    h.state_mut().session.undo();
+    h.run_steps(3);
+    // Onto a layer with a vector mask: the prompt, Cancel keeps it, OK replaces it.
+    h.state_mut().session.execute("layer.vectorMask.edit", json!({"layer": pixel, "invert": true})).unwrap();
+    h.run_steps(3);
+    let old = mask(&h);
+    let before = steps(&h);
+    let ask = |h: &mut Harness<'static, PhotocraftApp>| {
+        let (a, b) = (row(h, shape).center(), row(h, pixel).center());
+        drag_from_to(h, a, b, CMD_ALT);
+        let d = h.state().ui.dialogs.iter().find(|d| crate::vector_mask_replace_prompt::owns(&d.fields)).expect("the prompt is open");
+        assert_eq!(d.fields["message"], "Replace the vector mask?");
+        d.id
+    };
+    let dialog = ask(&mut h);
+    assert_eq!(mask(&h), old, "nothing changes before the answer");
+    crate::dialogs::cancel(h.state_mut(), dialog).unwrap();
+    assert_eq!(mask(&h), old);
+    assert_eq!(steps(&h), before);
+    let dialog = ask(&mut h);
+    crate::dialogs::confirm(h.state_mut(), dialog).unwrap();
+    assert_eq!(mask(&h), Some(shape_path(&h)));
+    assert_eq!(steps(&h), before + 1);
+}
+
+/// ⌘⌥-dragging a vector mask's thumbnail onto another layer copies the mask there; the source
+/// keeps it. A shape layer's row refuses it (its path is its mask).
+#[test]
+fn cmd_alt_dragging_a_vector_mask_thumbnail_copies_it() {
+    let mut s = photocraft_engine::Session::new();
+    s.execute("file.new", json!({"width": 64, "height": 48})).unwrap();
+    let target = s.execute("layer.new.layer", json!({"name": "Target"})).unwrap()["layer"].as_u64().unwrap();
+    let shape = s.execute("shape.create", json!({"kind": "rect", "rect": [4, 4, 30, 30]})).unwrap()["layer"].as_u64().unwrap();
+    let source = s.execute("layer.new.layer", json!({"name": "Source"})).unwrap()["layer"].as_u64().unwrap();
+    let path = json!({"subpaths": [{"knots": [[2, 2], [40, 2], [40, 40], [2, 40]]}]});
+    s.execute("layer.vectorMask.add", json!({"layer": source, "path": path})).unwrap();
+    let mut h = harness(s, 1.0, "promedium", 290.0);
+    let layer = |h: &Harness<'_, PhotocraftApp>, id: u64| h.state().session.active().unwrap().doc.layer(photocraft_doc::LayerId(id)).unwrap().clone();
+    let row = |h: &Harness<'_, PhotocraftApp>, id: u64| recorded(&h.ctx).into_iter().find(|r| r.layer == id).unwrap().row;
+    let thumb = |h: &Harness<'_, PhotocraftApp>| {
+        crate::mask_thumbs_ui::recorded(&h.ctx, source).unwrap().0.into_iter().find(|(k, _)| *k == crate::mask_thumbs_ui::MaskKind::Vector).unwrap().1.center()
+    };
+    let steps = h.state().session.active().unwrap().history.past_len();
+    let (a, b) = (thumb(&h), row(&h, shape).center());
+    drag_from_to(&mut h, a, b, CMD_ALT);
+    assert_eq!(h.state().session.active().unwrap().history.past_len(), steps, "a shape layer refuses a vector mask");
+    let (a, b) = (thumb(&h), row(&h, target).center());
+    drag_from_to(&mut h, a, b, CMD_ALT);
+    assert_eq!(layer(&h, target).vector_mask, layer(&h, source).vector_mask);
+    assert!(layer(&h, source).vector_mask.is_some(), "the source keeps its mask");
+    assert_eq!(h.state().session.active().unwrap().history.past_len(), steps + 1);
+}

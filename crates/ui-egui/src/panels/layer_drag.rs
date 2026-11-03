@@ -103,6 +103,16 @@ pub(super) fn layer_drag_and_drop(
     let pointer = ctx.input(|i| i.pointer.interact_pos());
     let released = ctx.input(|i| i.pointer.any_released());
     let copy = ctx.input(|i| i.modifiers.alt);
+    // With ⌘⌥ held a shape layer's drag carries its path, not the layer: `vector_mask_drop` takes it.
+    if vector_mask_source(app, ctx) == Some(dragged) {
+        app.reorder_preview = None;
+        if dragged == l.id.0
+            && let Some(p) = pointer
+        {
+            crate::layer_transfer::ghost(ctx, p, tl!("Vector Mask"));
+        }
+        return;
+    }
     if dragged == l.id.0 {
         // Ghost label following the pointer, and the copy cursor while ⌥ is held.
         if let Some(p) = pointer {
@@ -196,6 +206,9 @@ pub(super) fn layer_drop_zone(
     actions: &mut Vec<(String, Value)>,
 ) {
     let Some(dragged) = ctx.data(|d| d.get_temp::<u64>(egui::Id::unique("layer-drag"))) else { return };
+    if vector_mask_source(app, ctx) == Some(dragged) {
+        return;
+    }
     let selected = app.session.active().map(|st| st.selected_layers()).unwrap_or_default();
     if target.0 == LayerId(dragged) && selected.len() > 1 && selected.contains(&target.0) {
         return;
@@ -245,6 +258,40 @@ pub(super) fn starts_mask_drag(ctx: &egui::Context, l: &Layer, resp: &egui::Resp
         MaskKind::Vector => l.vector_mask.is_some(),
     };
     present.then_some(kind)
+}
+
+/// The layer whose path a drop would make a vector mask of: with ⌘⌥ held (Ctrl+Alt off macOS), a
+/// dragged shape layer's row or a dragged vector-mask thumbnail.
+pub(super) fn vector_mask_source(app: &PhotocraftApp, ctx: &egui::Context) -> Option<u64> {
+    if !ctx.input(|i| i.modifiers.command && i.modifiers.alt) {
+        return None;
+    }
+    if let Some((id, MaskKind::Vector)) = ctx.data(|d| d.get_temp::<MaskDrag>(mask_drag_key())) {
+        return Some(id);
+    }
+    let id = ctx.data(|d| d.get_temp::<u64>(egui::Id::unique("layer-drag")))?;
+    let l = app.session.active()?.doc.layer(LayerId(id))?;
+    matches!(l.content, photocraft_doc::LayerContent::Shape(_)).then_some(id)
+}
+
+/// A layer row accepts a ⌘⌥-dragged shape or vector mask (Photoshop): outlined while the pointer is
+/// over it, and on release the path becomes the row's vector mask (asking first when that replaces
+/// one). Shape layers, whose path is their mask, and locked layers don't take it.
+pub(super) fn vector_mask_drop(app: &PhotocraftApp, ctx: &egui::Context, ui: &egui::Ui, l: &Layer, rect: Rect, actions: &mut Vec<(String, Value)>) {
+    let Some(from) = vector_mask_source(app, ctx) else { return };
+    let Some(p) = ctx.input(|i| i.pointer.interact_pos()) else { return };
+    if from == l.id.0 || !rect.contains(p) || matches!(l.content, photocraft_doc::LayerContent::Shape(_)) {
+        return;
+    }
+    if app.session.active().is_none_or(|st| st.doc.effective_locks(l.id).all) {
+        return;
+    }
+    let t = Tokens::get(ctx);
+    ui.painter().rect_stroke(rect.shrink(1.0), t.radius_sm, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+    ctx.set_cursor_icon(egui::CursorIcon::Copy);
+    if ctx.input(|i| i.pointer.any_released()) {
+        actions.push(crate::vector_mask_replace_prompt::drop_action(from, l.id.0));
+    }
 }
 
 pub(super) fn fx_drag_key() -> egui::Id {

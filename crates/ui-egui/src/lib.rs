@@ -181,6 +181,7 @@ pub use dialogs::stack_dialog;
 pub use dialogs::stroke_ui;
 pub use dialogs::targa_options_ui;
 pub use dialogs::tiff_options_ui;
+pub use dialogs::vector_mask_replace_prompt;
 pub use dialogs::vp_ui;
 pub use dialogs::wide_angle_ui;
 use input::alt_grab;

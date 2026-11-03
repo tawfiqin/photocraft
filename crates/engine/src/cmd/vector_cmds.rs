@@ -83,7 +83,9 @@ use shape::{
     paste_shape_fill, paste_shape_stroke, selection_to_shape, shape_create, shape_edit, shape_info, shape_rasterize,
 };
 pub use shape::{preview_shape_stroke, refresh_shape, shape_path, transform_shape, translate_vectors};
-use vector_mask::{toggle_vector_mask, vector_mask_add, vector_mask_delete, vector_mask_edit, vector_mask_info, vector_mask_rasterize, with};
+use vector_mask::{
+    toggle_vector_mask, vector_mask_add, vector_mask_delete, vector_mask_edit, vector_mask_info, vector_mask_rasterize, vector_mask_transfer, with,
+};
 
 pub(crate) fn leak(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
@@ -254,6 +256,14 @@ pub fn specs() -> Vec<CommandSpec> {
             r##"{"layer":id?,"path":{…}? | "name":str|"work"? (copy a document path),"hide":bool=false (Hide All = inverted)} → vector mask info. Without a path the mask reveals all."##,
             has_layer,
             |s, p| vector_mask_add(s, p, false)
+        ),
+        spec!(
+            "layer.vectorMask.transfer",
+            "Copy Vector Mask",
+            [],
+            r##"{"from":id,"to":id,"copy":bool=true} (Layers panel ⌘⌥-drag: the source's vector mask, or a shape layer's path, becomes the target's vector mask, replacing any it has; without `copy` a vector mask moves, a shape keeps its path) → the target's vector mask info"##,
+            has_layer,
+            vector_mask_transfer
         ),
         spec!(
             "layer.vectorMask.fromPath",

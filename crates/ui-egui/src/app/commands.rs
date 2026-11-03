@@ -1,6 +1,6 @@
 use super::{
     DocId, PhotocraftApp, Tool, Value, actions, canvas, delete_layer_prompt, dock, gpu_canvas, jobs_ui, json, mask_trash_prompt, notices, panel_docking,
-    smart_svg_ui, state, transform_tool, type_transform, vector_ui,
+    smart_svg_ui, state, transform_tool, type_transform, vector_mask_replace_prompt, vector_ui,
 };
 
 impl PhotocraftApp {
@@ -10,6 +10,9 @@ impl PhotocraftApp {
             return result;
         }
         if let Some(result) = mask_trash_prompt::intercept(self, id, &params) {
+            return result;
+        }
+        if let Some(result) = vector_mask_replace_prompt::intercept(self, id, &params) {
             return result;
         }
         // Automation input also gates every step a command runs on its behalf (`actions.play`).
